@@ -1,0 +1,27 @@
+[project]
+name = "ml-exp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "boon", email = "boonsvj2016@gmail.com" }
+]
+requires-python = "==3.12.14"
+dependencies = [
+    "torch[device-gfx1150]==2.12.0+rocm10.0.0",
+    "wandb>=0.30.0",
+]
+
+[project.scripts]
+ml-exp = "ml_exp:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "amd-rocm" }
+
+[[tool.uv.index]]
+name = "amd-rocm"
+url = "https://stable.repo.amd.com/rocm/whl-next/"

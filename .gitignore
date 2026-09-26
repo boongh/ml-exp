@@ -157,6 +157,9 @@ ENV/
 env.bak/
 venv.bak/
 
+#observability
+wandb/
+
 # Spyder project settings
 .spyderproject
 .spyproject
