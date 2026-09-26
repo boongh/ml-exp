@@ -7,17 +7,17 @@ from .attention import MultiHeadAttention
 
 # Dimensions: (B, T, n_embed) in and out, where B = batch size, T = sequence length, n_embed = embedding dimension
 class TransformerBlock(nn.Module):
-    def __init__(self, max_block_size, head_size, n_embed, n_head, rank_devision = 1, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, head_size, n_embed, n_head, rank_devision = 1, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.attention = MultiHeadAttention(head_size, n_embed, n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate)
-        self.ffwdn = MLP_Lowrank(n_embed, n_embed // rank_devision, dtype=dtype, dropout_rate=dropout_rate)
+        self.ffwdn = MLP_Full(n_embed, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
         self.layer_norm1 = nn.LayerNorm(n_embed, dtype=dtype)
         self.layer_norm2 = nn.LayerNorm(n_embed, dtype=dtype)
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
         x = self.dropout(x)
-        # x + self.attention() = residual connection
+        # x + self.attention() = residual connectiong
         # Norm before sublayer -> Pre norm formulation
         x = x + self.attention(self.layer_norm1(x))
         x = x + self.ffwdn(self.layer_norm2(x))
@@ -37,7 +37,7 @@ class LangModel(nn.Module):
         transformer_chain = []
 
         for _ in range(transformer_blocks):
-            transformer_chain.append(TransformerBlock(block_size, head_size, self.hiddenlayer_size, n_head=n_head, rank_devision=rank_devision, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
+            transformer_chain.append(TransformerBlock(head_size, self.hiddenlayer_size, n_head, rank_devision=rank_devision, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
             transformer_chain.append(SineusoidalPositionalEncoding(self.hiddenlayer_size, dtype=dtype, max_len=block_size))
 
         #### Transformer Block
@@ -46,6 +46,7 @@ class LangModel(nn.Module):
             *transformer_chain,
         )
 
+        # Projection layer to vocab size
         self.lm_head = nn.Linear(self.hiddenlayer_size, vocab_size, dtype=dtype)
 
 

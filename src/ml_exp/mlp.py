@@ -6,9 +6,9 @@ class MLP_Full(nn.Module):
     def __init__(self, n_embed, dtype=torch.float32, dropout_rate=0.1, activation=nn.GELU()):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embed, n_embed * 2, dtype=dtype),
+            nn.Linear(n_embed, n_embed, dtype=dtype),
             activation,
-            nn.Linear(n_embed * 2, n_embed, dtype=dtype),
+            nn.Linear(n_embed, n_embed, dtype=dtype),
             nn.Dropout(dropout_rate)
         )
     
