@@ -158,7 +158,7 @@ for divisor in rank_divisors:
 
     wandb_run = wandb.init(
         project="ml-exp",
-        name=run_tag + f"_{run_timestamp} rank_div_{rank_division}",
+        name=run_tag + f"laptop_{run_timestamp} rank_div_{rank_division}",
         config=hyperparameters,
     )
 
