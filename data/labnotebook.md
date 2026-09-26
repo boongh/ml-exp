@@ -7,7 +7,9 @@
 This project will always use the full complete volumes of "In Search of Lost Time" digital text copy from the Internet Archive. This choice was made due to it being the single longest public domain literature I knew of (7672232 bytes).
 
 ## EXP0. Baseline
-###### Base commit: `5b9440d96d9c17b5f2b44b03e514878aa53d03bd`; run included uncommitted `MLP_Full` changes
+###### Base commit: `3f8b4fd4590c917bc6d6454532a8943a56b564cd`
+
+###### **Note:** Part of the hyperparameters of this experiment was produced in commit `5b9440d96d9c17b5f2b44b03e514878aa53d03bd` due to a mistake.
 
 The first experimental run to establish a baseline performance for the model. The results and hyperparameters are as below. Changes to the model will be made and recorded throughout the experiment's lifetime.
 
@@ -16,7 +18,7 @@ The first experimental run to establish a baseline performance for the model. Th
 | Parameter                         |                                                       Value |
 | --------------------------------- | ----------------------------------------------------------: |
 | Run tag                           |                                                  `Baseline` |
-| Run timestamp                     |                                       `2026-09-26_15-19-37` |
+| Run timestamp                     |                                       `2026-09-26_15-56-36` |
 | Training split                    |                                                         90% |
 | Validation split                  |                                                         10% |
 | Random seed                       |                                                        1337 |
@@ -45,7 +47,7 @@ The first experimental run to establish a baseline performance for the model. Th
 | Input projection     | Linear, 128 → 256                                                                               |
 | Transformer stack    | 6 pre-norm Transformer blocks; model width 256                                                  |
 | Self-attention       | 4 heads; head size 8; fused QKV projection; scaled dot-product causal attention                 |
-| Feed-forward network | `MLP_Full`; 256 → 256 → 256; GELU activation                                                   |
+| Feed-forward network | `MLP_Full`; 256 → 256 → 256; GELU activation                                                    |
 | Block structure      | Layer normalization, residual connections, and dropout 0.2                                      |
 | Language-model head  | Linear, 256 → 90 logits                                                                         |
 | Parameter count      | 1,063,130                                                                                       |
@@ -78,25 +80,29 @@ The first experimental run to establish a baseline performance for the model. Th
 
 
 ## EXP1. Low-rank MLP
+###### Commit `5b9440d96d9c17b5f2b44b03e514878aa53d03bd`
 
 Our first series of experiments will be one concerning the idea of using 2 linear projection layer of dimension (N, k) and (k, M) to achieve the work of an single linear projection layer of dimension (N, M).
 
 ### Methodology
 
-We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor` (*called `rank_devision` in the commit due to typo*), which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`
+We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor` (*called `rank_devision` in the commit due to typo*), which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor == n_embed`. Only notable milestone will receive a writing. All the other data explicitly mentioned will be included in the graph and analysis.
 
-### Test_1 - Rank Division 1
+### Test_1 - Rank Divisor 1
+At rank divisor 1, `MLP_Lowrank` uses a total of 4 `n_embed -> n_embed` instead of 2. This results in over 74% increase in parameter count compared to baseline.
 
 ### Test Model hyperparameters
 | Component       | Configuration |
 | :-------------- | ------------: |
 | Parameter count |     1,852,634 |
 
+while performing ~18ms slower per step, concluding at a slightly higher training and validation loss.
+
 ### Training results
 
-|  Step | Train loss | Validation loss | Time per step (ms) | Elapsed time |
-| ----: | ---------: | --------------: | -----------------: | -----------: |
-|     0 |     5.9751 |          5.9768 |             504.80 |           8s |
+| Step  | Train loss | Validation loss | Time per step (ms) | Elapsed time |
+| :---- | ---------: | --------------: | -----------------: | -----------: |
+| 0     |     5.9751 |          5.9768 |             504.80 |           8s |
 | 1,000 |     2.1220 |          2.1453 |              80.46 |       2m 30s |
 | 2,000 |     1.9435 |          1.9661 |              78.93 |       4m 48s |
 | 3,000 |     1.8455 |          1.8785 |              77.83 |       7m 02s |
@@ -117,3 +123,10 @@ We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_e
 | Final loss                 |     1.6019 |          1.6530 | Step 9,999                 |
 | Final measured speed       |          — |               — | 78.96 ms/step              |
 | Training-loop elapsed time |          — |               — | 1,367.43 seconds (22m 47s) |
+
+### Development
+
+After this, I realized that I could create a loop of training loops that automatically does the model definition, training, and logging, for different rank divisor from 1 to n_embed with some increments.
+
+### Test 2 - Rank divisor 1 - n_embed
+
