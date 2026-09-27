@@ -86,47 +86,8 @@ Our first series of experiments will be one concerning the idea of using 2 linea
 
 ### Methodology
 
-We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor` (*called `rank_devision` in the commit due to typo*), which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor == n_embed`. Only notable milestone will receive a writing. All the other data explicitly mentioned will be included in the graph and analysis.
+We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor`, which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor == n_embed`. Only notable milestone will receive a writing. All the other data explicitly mentioned will be included in the graph and analysis.
 
-### Test_1 - Rank Divisor 1
-At rank divisor 1, `MLP_Lowrank` uses a total of 4 `n_embed -> n_embed` instead of 2. This results in over 74% increase in parameter count compared to baseline.
+### Tests
 
-### Test Model hyperparameters
-| Component       | Configuration |
-| :-------------- | ------------: |
-| Parameter count |     1,852,634 |
-
-while performing ~18ms slower per step, concluding at a slightly higher training and validation loss.
-
-### Training results
-
-| Step  | Train loss | Validation loss | Time per step (ms) | Elapsed time |
-| :---- | ---------: | --------------: | -----------------: | -----------: |
-| 0     |     5.9751 |          5.9768 |             504.80 |           8s |
-| 1,000 |     2.1220 |          2.1453 |              80.46 |       2m 30s |
-| 2,000 |     1.9435 |          1.9661 |              78.93 |       4m 48s |
-| 3,000 |     1.8455 |          1.8785 |              77.83 |       7m 02s |
-| 4,000 |     1.7681 |          1.8080 |              78.51 |       9m 16s |
-| 5,000 |     1.7281 |          1.7614 |              79.27 |      11m 31s |
-| 6,000 |     1.6962 |          1.7418 |              79.58 |      13m 47s |
-| 7,000 |     1.6685 |          1.7005 |              78.47 |      16m 03s |
-| 8,000 |     1.6174 |          1.6747 |              78.87 |      18m 18s |
-| 9,000 |     1.6075 |          1.6549 |              78.07 |      20m 33s |
-| 9,999 |     1.6019 |          1.6530 |              78.96 |      22m 47s |
-
-### Result summary
-
-| Result                     | Train loss | Validation loss | Step / value               |
-| -------------------------- | ---------: | --------------: | -------------------------- |
-| Initial loss               |     5.9751 |          5.9768 | Step 0                     |
-| Best validation loss       |          — |          1.6391 | Steps 9,300 and 9,600      |
-| Final loss                 |     1.6019 |          1.6530 | Step 9,999                 |
-| Final measured speed       |          — |               — | 78.96 ms/step              |
-| Training-loop elapsed time |          — |               — | 1,367.43 seconds (22m 47s) |
-
-### Development
-
-After this, I realized that I could create a loop of training loops that automatically does the model definition, training, and logging, for different rank divisor from 1 to n_embed with some increments.
-
-### Test 2 - Rank divisor 1 - n_embed
-
+![graph](./media/wandb_rank_divisor_loss.svg)
