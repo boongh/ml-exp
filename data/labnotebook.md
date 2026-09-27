@@ -86,8 +86,9 @@ Our first series of experiments will be one concerning the idea of using 2 linea
 
 ### Methodology
 
-We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor`, which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor == n_embed`. Only notable milestone will receive a writing. All the other data explicitly mentioned will be included in the graph and analysis.
+We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor`, which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor` is equal to the `hidden_layer_size` of `TransformerBlocks` (In this case, 1 to 256).
 
 ### Tests
+Experiment for `rank_divisor` 1 to 128 was done in commit `63be74b9624e9c340174354d10c9f53439d34353` and for `rank_divisor` 256 
 
 ![graph](./media/wandb_rank_divisor_loss.svg)

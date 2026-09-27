@@ -19,10 +19,6 @@ block_size = 128
 batch_size = 16
 head_size = 32 // 4
 n_embed = 32 * 4
-
-#Construct a geometric progression of rank divisor from 1 to n_embed with ratio 2
-rank_divisors = [n_embed // (2 ** i) for i in range(int(n_embed.bit_length()) - 1, -1, -1)]
-
 hidden_layer_size = 256
 n_head = 4
 causal = True
@@ -92,7 +88,7 @@ def generate_eval_outputs(max_new_tokens):
         outputs.append({"prompt": prompt, "generation": generated})
     return outputs
 
-for divisor in rank_divisors:
+for divisor in [256]:
     print(f"Rank divisor: {divisor}, resulting rank: {n_embed // divisor}")
     rank_division = divisor
 
