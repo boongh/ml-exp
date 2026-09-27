@@ -54,19 +54,7 @@ The first experimental run to establish a baseline performance for the model. Th
 
 ### Training results
 
-|  Step | Train loss | Validation loss | Time per step (ms) | Elapsed time |
-| ----: | ---------: | --------------: | -----------------: | -----------: |
-|     0 |     5.4718 |          5.4825 |             382.99 |           5s |
-| 1,000 |     2.1318 |          2.1494 |              60.88 |       1m 49s |
-| 2,000 |     1.9474 |          1.9770 |              54.93 |       3m 29s |
-| 3,000 |     1.8593 |          1.8905 |              57.07 |       5m 06s |
-| 4,000 |     1.7784 |          1.8119 |              61.95 |       6m 44s |
-| 5,000 |     1.7404 |          1.7636 |              55.84 |       8m 22s |
-| 6,000 |     1.6942 |          1.7353 |              60.05 |      10m 02s |
-| 7,000 |     1.6462 |          1.6887 |              57.22 |      11m 40s |
-| 8,000 |     1.6218 |          1.6734 |              59.96 |      13m 20s |
-| 9,000 |     1.6098 |          1.6531 |              60.92 |      15m 04s |
-| 9,999 |     1.6001 |          1.6481 |              57.45 |      16m 49s |
+![Baseline validation loss](./media/wandb_baseline_val_loss.svg)
 
 ### Result summary
 
@@ -86,9 +74,15 @@ Our first series of experiments will be one concerning the idea of using 2 linea
 
 ### Methodology
 
-We first substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor`, which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor` is equal to the `hidden_layer_size` of `TransformerBlocks` (In this case, 1 to 256).
+We substitude `MLP_Full` with a `MLP_Lowrank` module with with `rank = n_embed // rank_divisor`, which internally does a double linear projection to achieve equivalent input-output dimension as `MLP_Full`. Each test will progressively increase the `rank_divisor` until `rank_divisor` is equal to the `hidden_layer_size` of `TransformerBlocks` (In this case, 1 to 256).
 
 ### Tests
-Experiment for `rank_divisor` 1 to 128 was done in commit `63be74b9624e9c340174354d10c9f53439d34353` and for `rank_divisor` 256 
+Experiment for `rank_divisor` 1 to 128 was done in commit `63be74b9624e9c340174354d10c9f53439d34353` and for `rank_divisor` 256 was done in `55667c29709eb5a612d32dbbc575550ed8a5a443`
 
+`rank divisor` is incremented in a geometric sequence of ratio 2
+
+###### Figure 5
 ![graph](./media/wandb_rank_divisor_loss.svg)
+
+The figure above shows that 
+
