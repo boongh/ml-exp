@@ -26,12 +26,10 @@ dtype = torch.float32
 train_fraction = 0.9
 transformer_blocks = 6
 step_count = 10_000
-lrate = 6e-4
 loss_est_count = 100
 checkin_iteration = 100
-random_seed = 1337
-pretrain_generation_tokens = 1000
-posttrain_generation_tokens = 10000
+pretrain_generation_tokens = 50
+posttrain_generation_tokens = 500
 dropout_rate = 0.2
 
 eval_prompts = [
@@ -39,15 +37,6 @@ eval_prompts = [
     "Klein Moretti was ",
     "Melissa was a ",
 ]
-
-while True:
-    run_tag = re.sub(r"[^A-Za-z0-9._-]+", "-", input("Tag this training run: ").strip()).strip("._-")
-    if run_tag:
-        break
-    print("Please enter a non-empty run tag.")
-
-#Reproducability
-torch.manual_seed(random_seed)
 
 #Data loading
 data_source = "./data/data.txt"
@@ -88,9 +77,65 @@ def generate_eval_outputs(max_new_tokens):
         outputs.append({"prompt": prompt, "generation": generated})
     return outputs
 
-for divisor in [256]:
-    print(f"Rank divisor: {divisor}, resulting rank: {n_embed // divisor}")
-    rank_division = divisor
+def set_seed(seed: int) -> None:
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+hyperparameters = {
+    "data_source": data_source,
+    "device": device,
+    "dtype": str(dtype),
+    "vocab_size": dataset.vocab_size,
+    "block_size": block_size,
+    "batch_size": batch_size,
+    "head_size": head_size,
+    "n_embed": n_embed,
+    "hidden_layer_size": hidden_layer_size,
+    "n_head": n_head,
+    "causal": causal,
+    "train_fraction": train_fraction,
+    "step_count": step_count,
+    "loss_est_count": loss_est_count,
+    "checkpoint_interval": checkin_iteration,
+    "pretrain_generation_tokens": pretrain_generation_tokens,
+    "posttrain_generation_tokens": posttrain_generation_tokens,
+    "eval_prompts": eval_prompts,
+    "transformer_blocks": transformer_blocks,
+    "dropout_rate": dropout_rate,
+}
+
+def format_duration(seconds):
+        seconds = max(0, round(seconds))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        if hours:
+            return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+        if minutes:
+            return f"{minutes:d}m {seconds:02d}s"
+        return f"{seconds:d}s"
+
+
+with wandb.init(
+    project="ml-exp",
+    group="mlp_rank_test",
+    config=hyperparameters,
+) as run:
+    config = run.config
+
+    run.name = f"rank test {run.config.mlp_rank}_{run.config.seed}"
+    # Create a separate artifact directory for every training run.
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_tag = "mlp_rank_test"
+    run_directory = (
+        Path("./data/training_log")
+        / f"{run_timestamp}_{run.id}_rank-{config.mlp_rank}_seed-{config.seed}"
+    )
+    run_directory.mkdir(parents=True, exist_ok=False)
+
+    
+    set_seed(config.seed)
+    print(f"Rank number {config.mlp_rank} seed {config.seed} on device {device}")
 
     #Model definition
     model = LangModel(
@@ -101,7 +146,7 @@ for divisor in [256]:
         transformer_blocks=transformer_blocks,
         n_head=n_head,
         hidden_layer_size=hidden_layer_size,
-        rank_division=rank_division,
+        mlp_rank=config.mlp_rank,
         dtype=dtype,
         causal=causal,
         dropout_rate=dropout_rate,
@@ -109,54 +154,23 @@ for divisor in [256]:
 
     optimizer = torch.optim.AdamW(
         model.parameters(), 
-        lr=lrate
+        lr=config.learning_rate
     )
 
-    # Create a separate artifact directory for every training run.
-    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_directory = Path("./data/training_log") / f"{run_timestamp}_{run_tag}"
-    run_directory.mkdir(parents=True, exist_ok=False)
-
-    hyperparameters = {
-        "run_timestamp": run_timestamp,
-        "run_tag": run_tag,
-        "data_source": data_source,
-        "device": device,
-        "dtype": str(dtype),
-        "random_seed": random_seed,
-        "vocab_size": dataset.vocab_size,
-        "block_size": block_size,
-        "batch_size": batch_size,
-        "head_size": head_size,
-        "n_embed": n_embed,
-        "hidden_layer_size": hidden_layer_size,
-        "n_head": n_head,
-        "rank_division": rank_division,
-        "causal": causal,
-        "train_fraction": train_fraction,
-        "step_count": step_count,
-        "learning_rate": lrate,
-        "optimizer": type(optimizer).__name__,
-        "loss_est_count": loss_est_count,
-        "checkpoint_interval": checkin_iteration,
-        "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
-        "pretrain_generation_tokens": pretrain_generation_tokens,
-        "posttrain_generation_tokens": posttrain_generation_tokens,
-        "eval_prompts": eval_prompts,
-        "transformer_blocks": transformer_blocks,
-        "dropout_rate": dropout_rate,
-    }
+    config["optimizer"] = optimizer.__class__.__name__
+    config["run_timestamp"] = run_timestamp
+    config["parameter_count"] = sum(parameter.numel() for parameter in model.parameters())
 
     with (run_directory / f"hyper_param_{run_timestamp}.txt").open("w", encoding="utf-8") as file:
-        for name, value in hyperparameters.items():
+        for name, value in dict(config).items():
             file.write(f"{name}={value}\n")
 
-
-    wandb_run = wandb.init(
-        project="ml-exp",
-        name=run_tag + f"laptop_{run_timestamp} rank_div_{rank_division}",
-        config=hyperparameters,
-    )
+        
+    best_val_loss = float("inf")
+    best_train_loss = float("inf")
+    best_step = 0
+    final_val_loss = None
+    final_train_loss = None
 
     #Pretrain
     model.eval()
@@ -165,7 +179,8 @@ for divisor in [256]:
     for output in pretrain_generations:
         print(f"Prompt: {output['prompt']}\n{output['generation']}")
 
-    wandb.log({
+
+    run.log({
         "pretrain_generations": wandb.Table(
             columns=["prompt", "generation"],
             data=[
@@ -178,17 +193,6 @@ for divisor in [256]:
     #training loop
     model.train()
 
-    def format_duration(seconds):
-        seconds = max(0, round(seconds))
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        if hours:
-            return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
-        if minutes:
-            return f"{minutes:d}m {seconds:02d}s"
-        return f"{seconds:d}s"
-
     # checkpoint = torch.load("model_checkpoint.pt", map_location=device)
     # torch.save(model, "model_checkpoint.pt")
 
@@ -198,7 +202,7 @@ for divisor in [256]:
     interval_start = loop_start
     previous_completed_steps = 0
 
-    for step in range(step_count):
+    for step in range(config.step_count):
 
         x, y = dataset.get_batch("train", block_size=block_size, batch_size=batch_size)
         _ , loss = model(x, y)
@@ -211,7 +215,7 @@ for divisor in [256]:
         loss.backward()
         optimizer.step()
 
-        if step % checkin_iteration == 0 or step == step_count - 1:
+        if step % checkin_iteration == 0 or step == config.step_count - 1:
             if device == "cuda":
                 torch.cuda.synchronize()
 
@@ -224,11 +228,21 @@ for divisor in [256]:
 
             losses = estimate_loss()
 
+            if losses['train'] < best_train_loss:
+                best_train_loss = losses['train']
+
+            if losses['val'] < best_val_loss:
+                best_val_loss = losses['val']
+                best_step = step
+
+            final_train_loss = losses['train']
+            final_val_loss = losses['val']
+
             # Include validation/checkpoint overhead in the ETA so it estimates
             # actual wall-clock time until the run finishes.
             checkpoint_end = time.perf_counter()
             elapsed = checkpoint_end - loop_start
-            remaining_steps = step_count - completed_steps
+            remaining_steps = config.step_count - completed_steps
             eta = elapsed / completed_steps * remaining_steps
             eta_text = (
                 format_duration(eta)
@@ -243,7 +257,7 @@ for divisor in [256]:
                 f"elapsed {format_duration(elapsed)}, ETA {eta_text}"
             )
 
-            wandb.log(
+            run.log(
                 {
                     "train_loss": losses["train"],
                     "val_loss": losses["val"],
@@ -264,7 +278,7 @@ for divisor in [256]:
     for output in posttrain_generations:
         print(f"Prompt: {output['prompt']}\n{output['generation']}")
 
-    wandb.log({
+    run.log({
         "posttrain_generations": wandb.Table(
             columns=["prompt", "generation"],
             data=[
@@ -274,4 +288,7 @@ for divisor in [256]:
         ),
     })
 
-    wandb_run.finish()
+    run.summary["best_val_loss"] = best_val_loss
+    run.summary["best_step"] = best_step
+    run.summary["final_val_loss"] = final_val_loss
+    run.summary["final_train_loss"] = final_train_loss
