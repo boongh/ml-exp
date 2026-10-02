@@ -118,7 +118,7 @@ def format_duration(seconds):
 
 with wandb.init(
     project="ml-exp",
-    group="mlp_rank_test",
+    group="mlp_artificial_param_increase_sweep",
     config=hyperparameters,
 ) as run:
     config = run.config
@@ -126,7 +126,7 @@ with wandb.init(
     run.name = f"rank test {run.config.mlp_rank}_{run.config.seed}"
     # Create a separate artifact directory for every training run.
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_tag = "mlp_rank_test"
+    run_tag = "mlp_artificial_param_increase_sweep"
     run_directory = (
         Path("./data/training_log")
         / f"{run_timestamp}_{run.id}_rank-{config.mlp_rank}_seed-{config.seed}"

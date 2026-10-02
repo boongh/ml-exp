@@ -1,0 +1,26 @@
+program: ml_exp
+name: low-rank-repetitions
+method: grid
+
+command:
+  - ${env}
+  - .venv/bin/python
+  - -m
+  - ${program}
+
+metric:
+  name: best_val_loss
+  goal: minimize
+
+parameters:
+  hidden_layer_size:
+    values: [64, 128, 256, 512, 1024]
+
+  seed:
+    values: [1337, 1338, 1339, 1340, 1341]
+
+  learning_rate:
+    value: 0.0006
+
+  step_count:
+    value: 10000
