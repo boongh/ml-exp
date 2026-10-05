@@ -123,7 +123,7 @@ with wandb.init(
 ) as run:
     config = run.config
 
-    run.name = f"rank test {run.config.mlp_rank}_{run.config.seed}"
+        
     # Create a separate artifact directory for every training run.
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_tag = "mlp_artificial_param_increase_sweep"
