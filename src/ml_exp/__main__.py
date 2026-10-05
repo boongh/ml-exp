@@ -19,7 +19,7 @@ block_size = 128
 batch_size = 16
 head_size = 32 // 4
 n_embed = 32 * 4
-hidden_layer_size = 256
+#hidden_layer_size = 256
 n_head = 4
 causal = True
 dtype = torch.float32
@@ -90,7 +90,6 @@ hyperparameters = {
     "batch_size": batch_size,
     "head_size": head_size,
     "n_embed": n_embed,
-    "hidden_layer_size": hidden_layer_size,
     "n_head": n_head,
     "causal": causal,
     "train_fraction": train_fraction,
@@ -129,13 +128,13 @@ with wandb.init(
     run_tag = "mlp_artificial_param_increase_sweep"
     run_directory = (
         Path("./data/training_log")
-        / f"{run_timestamp}_{run.id}_rank-{config.mlp_rank}_seed-{config.seed}"
+        / f"{run_timestamp}_{run.id}_hidden_layer_embed-{config.hidden_layer_size}_seed-{config.seed}"
     )
     run_directory.mkdir(parents=True, exist_ok=False)
 
     
     set_seed(config.seed)
-    print(f"Rank number {config.mlp_rank} seed {config.seed} on device {device}")
+    print(f"hidden layer embedding size {config.hidden_layer_size} seed {config.seed} on device {device}")
 
     #Model definition
     model = LangModel(
@@ -145,8 +144,7 @@ with wandb.init(
         n_embed=n_embed,
         transformer_blocks=transformer_blocks,
         n_head=n_head,
-        hidden_layer_size=hidden_layer_size,
-        mlp_rank=config.mlp_rank,
+        hidden_layer_size=config.hidden_layer_size,
         dtype=dtype,
         causal=causal,
         dropout_rate=dropout_rate,

@@ -51,7 +51,7 @@ class FixedSizeTransformerBlock(nn.Module):
 
 ## Test effect of increasing MLP parameter count and hidden layer without non-linearities in between
 class MultiWidthLayerLinearTransformerBlock(nn.Module):
-    def __init__(self, head_size, input_n_embed, hidden_n_embed, n_head, mlp_rank = 1, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, head_size, input_n_embed, hidden_n_embed, n_head, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.attention = MultiHeadAttention(head_size, input_n_embed, n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate)
 
@@ -81,9 +81,10 @@ class MultiWidthLayerLinearTransformerBlock(nn.Module):
         return x
 
 class LangModel(nn.Module):
-    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, transformer_blocks=1, n_head=4, hidden_layer_size=256, mlp_rank=1, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, transformer_blocks=1, n_head=4, hidden_layer_size=256, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.block_size = block_size
+        self.input_n_embed = n_embed
 
         # Define model layers
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed, dtype=dtype)
@@ -94,17 +95,16 @@ class LangModel(nn.Module):
         transformer_chain = []
 
         for _ in range(transformer_blocks):
-            transformer_chain.append(MultiWidthLayerLinearTransformerBlock(head_size, self.hiddenlayer_size, n_head, mlp_rank=mlp_rank, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
-            transformer_chain.append(SineusoidalPositionalEncoding(self.hiddenlayer_size, dtype=dtype, max_len=block_size))
+            transformer_chain.append(MultiWidthLayerLinearTransformerBlock(head_size, self.input_n_embed, hidden_n_embed=hidden_layer_size, n_head=n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
+            transformer_chain.append(SineusoidalPositionalEncoding(self.input_n_embed, dtype=dtype, max_len=block_size))
 
         #### Transformer Block
         self.transformer_blocks = nn.Sequential(
-            nn.Linear(n_embed, self.hiddenlayer_size, dtype=dtype),
             *transformer_chain,
         )
 
         # Projection layer to vocab size
-        self.lm_head = nn.Linear(self.hiddenlayer_size, vocab_size, dtype=dtype)
+        self.lm_head = nn.Linear(self.input_n_embed, vocab_size, dtype=dtype)
 
 
     def forward(self, idx, targets = None):

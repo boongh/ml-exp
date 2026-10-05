@@ -1,5 +1,5 @@
 program: ml_exp
-name: low-rank-repetitions
+name: mlp-artificial-param-increase-sweep
 method: grid
 
 command:
@@ -14,7 +14,7 @@ metric:
 
 parameters:
   hidden_layer_size:
-    values: [64, 128, 256, 512, 1024]
+    values: [32, 64, 128, 256, 512, 1024, 2048]
 
   seed:
     values: [1337, 1338, 1339, 1340, 1341]
