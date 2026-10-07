@@ -1,7 +1,7 @@
 from quopri import encode
 from datetime import datetime
 from pathlib import Path
-import re
+import random
 import time
 
 import torch
@@ -80,7 +80,8 @@ def generate_eval_outputs(max_new_tokens):
 def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
+    random.seed(seed)
+    
 hyperparameters = {
     "data_source": data_source,
     "device": device,
