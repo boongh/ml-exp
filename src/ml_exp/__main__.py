@@ -19,7 +19,6 @@ block_size = 128
 batch_size = 16
 head_size = 32 // 4
 n_embed = 32 * 4
-#hidden_layer_size = 256
 n_head = 4
 causal = True
 dtype = torch.float32
@@ -118,7 +117,7 @@ def format_duration(seconds):
 
 with wandb.init(
     project="ml-exp",
-    group="mlp_artificial_param_increase_sweep",
+    group="mlp-fixed-param-count-sweep",
     config=hyperparameters,
 ) as run:
     config = run.config
@@ -126,16 +125,16 @@ with wandb.init(
         
     # Create a separate artifact directory for every training run.
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_tag = "mlp_artificial_param_increase_sweep"
+    run_tag = "mlp_fixed_param_count_sweep"
     run_directory = (
         Path("./data/training_log")
-        / f"{run_timestamp}_{run.id}_hidden_layer_embed-{config.hidden_layer_size}_seed-{config.seed}"
+        / f"{run_timestamp}_{run.id}_mlp_rank-{config.mlp_rank}_seed-{config.seed}"
     )
     run_directory.mkdir(parents=True, exist_ok=False)
 
     
     set_seed(config.seed)
-    print(f"hidden layer embedding size {config.hidden_layer_size} seed {config.seed} on device {device}")
+    print(f"MLP rank {config.mlp_rank} seed {config.seed} on device {device}")
 
     #Model definition
     model = LangModel(
@@ -145,7 +144,7 @@ with wandb.init(
         n_embed=n_embed,
         transformer_blocks=transformer_blocks,
         n_head=n_head,
-        hidden_layer_size=config.hidden_layer_size,
+        mlp_rank=config.mlp_rank,
         dtype=dtype,
         causal=causal,
         dropout_rate=dropout_rate,
@@ -156,6 +155,7 @@ with wandb.init(
         lr=config.learning_rate
     )
 
+    config["hidden_layer_size"] = hidden_layer = int((2 * n_embed ** 2 + n_embed - 2 * config.mlp_rank * n_embed - 2 * config.mlp_rank) / (2 * config.mlp_rank + 1))
     config["optimizer"] = optimizer.__class__.__name__
     config["run_timestamp"] = run_timestamp
     config["parameter_count"] = sum(parameter.numel() for parameter in model.parameters())

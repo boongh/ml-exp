@@ -35,11 +35,24 @@ def main():
         n_embed=32,
         transformer_blocks=2,
         n_head=4,
-        hidden_layer_size=64,
+        mlp_rank=4,
     ).to(args.device)
     for block in model.transformer_blocks[::2]:
         check(block.attention.n_head == 4, "Incorrect attention head count")
-        check(block.internal_projection_in.out_features == 64, "Incorrect hidden width")
+        # The bias-inclusive budget gives floor(1816 / 9) = 201 hidden units.
+        linear_shapes = [
+            (layer.in_features, layer.out_features)
+            for layer in block.ffwdn.net
+            if isinstance(layer, torch.nn.Linear)
+        ]
+        check(
+            linear_shapes == [(32, 4), (4, 201), (201, 4), (4, 32)],
+            "Incorrect fixed-budget MLP dimensions",
+        )
+        check(
+            sum(parameter.numel() for parameter in block.ffwdn.parameters()) == 2105,
+            "Incorrect MLP parameter count (baseline 2112, rounding gap 7)",
+        )
 
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)

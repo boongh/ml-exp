@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from .pos_embs import SineusoidalPositionalEncoding, SimplePositionalEncoding
-from .mlp import MLP_Full, MLP_Lowrank
+from .mlp import MLP_Full, MLP_Lowrank, MLP_fixed
 from .attention import MultiHeadAttention
 
 # Dimensions: (B, T, n_embed) in and out, where B = batch size, T = sequence length, n_embed = embedding dimension
@@ -28,14 +28,12 @@ class TransformerBlock(nn.Module):
 # so that the parameter count in the MLP is fixed to baseline_n_embed ** 2
 # where baseline_n_embed is the embedding dimension of a baseline model with 
 # full-rank MLP
-#! TODO: Need a way to fix total parameter count in a transformer block to stay as consistent as possible. 
-#! Internal projection layers increases parameter count, haven't proved yet that it has no effect on performance, but it is a concern.
 # Dimensions: (B, T, n_embed) in and out, where B = batch size, T = sequence length, n_embed = embedding dimension
 class FixedSizeTransformerBlock(nn.Module):
-    def __init__(self, head_size, n_embed, n_head, mlp_rank = 1, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, head_size, n_embed, n_head, mlp_rank, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.attention = MultiHeadAttention(head_size, n_embed, n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate)
-        self.ffwdn = MLP_Lowrank(n_embed, mlp_rank, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
+        self.ffwdn = MLP_fixed(n_embed, mlp_rank, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
         self.layer_norm1 = nn.LayerNorm(n_embed, dtype=dtype)
         self.layer_norm2 = nn.LayerNorm(n_embed, dtype=dtype)
         self.dropout = nn.Dropout(dropout_rate)
@@ -81,7 +79,7 @@ class MultiWidthLayerLinearTransformerBlock(nn.Module):
         return x
 
 class LangModel(nn.Module):
-    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, transformer_blocks=1, n_head=4, hidden_layer_size=256, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, transformer_blocks=1, n_head=4, mlp_rank=32, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.block_size = block_size
         self.input_n_embed = n_embed
@@ -91,11 +89,10 @@ class LangModel(nn.Module):
         # self.position_embedding_table = nn.Embedding(block_size, n_embed, dtype=dtype)
         self.positional_encoding = SineusoidalPositionalEncoding(n_embed, dtype=dtype, max_len=block_size)
 
-        self.hiddenlayer_size = hidden_layer_size
         transformer_chain = []
 
         for _ in range(transformer_blocks):
-            transformer_chain.append(MultiWidthLayerLinearTransformerBlock(head_size, self.input_n_embed, hidden_n_embed=hidden_layer_size, n_head=n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
+            transformer_chain.append(FixedSizeTransformerBlock(head_size, self.input_n_embed, n_head=n_head, mlp_rank=mlp_rank, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
             transformer_chain.append(SineusoidalPositionalEncoding(self.input_n_embed, dtype=dtype, max_len=block_size))
 
         #### Transformer Block
