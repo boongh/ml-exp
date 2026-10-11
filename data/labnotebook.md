@@ -90,8 +90,8 @@ Experiment for `rank_divisor` 1 to 128 was done in commit `63be74b9624e9c3401743
 
 #### Results
 
-###### Figure 5
-![graph of rank divisor against validation loss](./media/wandb_rank_divisor_loss.svg)
+
+![graph of rank divisor against validation loss](./media/wandb_rank_divisor_loss.svg)*[Figure 5]*
 
 The figure above shows that, as expected increasing the rank divisor substanially degrades the validation loss of the model. Rank divisor of 1, which doubles the parameter count of the `MLP_Lowrank` compares to and `MLP_Full` of the same `n_embed`, does not show any improvement in validation loss compared to the baseline. Rank divisor of 2, which makes the parameter count in the transformer block equal to the baseline, shows slightly higher validation loss compared to the baseline.
 
@@ -108,3 +108,14 @@ From the preliminary tests, the gap in validation loss at divisor 16 and 32, alo
 
 ### Test 1 - Exploring the Validation Loss Jump
 
+*Relevant commits*
+
+***[1]*** `72265c15ca1996351e17e39afc4843f643594f3c`
+
+***
+
+Further exploration of the validation loss jump was done with W&B sweep in commit **[1]**.
+
+![Graph of best valudation loss against mlp ranks from 6 to 20](./media/bvl.v.rank_6-20.svg)
+
+Using a sample of 5 different seeds, I tested frequently for best validation loss between mlp rank 6 and 20 (and just to make sure up there is a pattern, to 256) and found that the graph does not exhibit any visually distinctive jump up and down in gradient as we might expect to observe from *[Figure 5]*
