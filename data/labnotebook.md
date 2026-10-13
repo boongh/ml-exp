@@ -118,4 +118,41 @@ Further exploration of the validation loss jump was done with W&B sweep in commi
 
 ![Graph of best valudation loss against mlp ranks from 6 to 20](./media/bvl.v.rank_6-20.svg)
 
-Using a sample of 5 different seeds, I tested frequently for best validation loss between mlp rank 6 and 20 (and just to make sure up there is a pattern, to 256) and found that the graph does not exhibit any visually distinctive jump up and down in gradient as we might expect to observe from *[Figure 5]*
+Using a sample of 5 different seeds, I tested frequently for best validation loss between mlp rank 6 and 20 (and just to make sure up there is a pattern, to 256) and found that plotting best validation loss against parameter count or mlp_rank does not exhibit any visually distinctive jump up and down in gradient as we might expect to observe from *[Figure 5]*
+
+Another interesting thing however is the plateau in gradient after around 400k to 600k parameters suggesting that something else might be bottlenecking the model.
+
+
+## EXP2. Exploring the tradeoff between hidden layer width and linear independence
+
+#### Goal
+
+This experiment aims to explore the effect and tradeoff of using a linearly dependent matrix formed from 2 lower rank matrices with combined parameter count equal to one of the baseline matrix, trading off the linear independence for wider hidden layer width.
+
+#### Methodology
+
+The number of parameter in the baseline MLP layer follows the formula
+
+$P_0 = (n\_embed + 1 )\times n\_embed  + (n\_embed + 1) \times n\_embed = 2 \times ((n\_embed + 1 )\times n\_embed)$
+
+The $+mlp\_width$ is because I discovered that linear layer has a bias vector.
+
+EXP 1 remains a valid low-rank parameterization of the MLP’s weight matrices. Including biases in both factors adds trainable parameters; the intermediate bias can be absorbed into the effective output bias.
+
+A MLP layer with 2 low rank matrices composing a larger matrix has the parameter count of
+
+$P_1 = (n\_embed + 1) \times rank + (rank + 1) \times hidden\_layer + (hidden\_layer+ 1) \times rank + (rank + 1) \times n\_embed$
+
+To get scale $hidden\_layer$ to get $P_1 = P_0$ from varying $rank$ the equation becomes
+
+$hidden\_layer = \frac{2  n^2 + n - 2 nr - 2 r}{2 r + 1} \qquad n = n\_embed, r=rank$
+
+### Result
+
+Related commits
+
+[1] - `8971c4fdf0e0d4eaa1f8da45c2c31e863e1963ec`
+
+The test found out that trading linear independence for hidden layer width consistently results in higher validation loss compared to a narrower model with higher independence.
+
+![graph](./media/fixed_size%20vary_hidden.svg)
