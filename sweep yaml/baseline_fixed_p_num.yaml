@@ -1,0 +1,23 @@
+program: ml_exp
+name: mlp-fixed-param-count-sweep
+method: grid
+
+command:
+  - ${env}
+  - .venv/bin/python
+  - -m
+  - ${program}
+
+metric:
+  name: best_val_loss
+  goal: minimize
+
+parameters:
+  seed:
+    values: [1337, 1338, 1339, 1340, 1341]
+
+  learning_rate:
+    value: 0.0006
+
+  step_count:
+    value: 10000

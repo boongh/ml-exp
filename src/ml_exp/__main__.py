@@ -104,37 +104,42 @@ hyperparameters = {
 }
 
 def format_duration(seconds):
-        seconds = max(0, round(seconds))
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
+    seconds = max(0, round(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
 
-        if hours:
-            return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
-        if minutes:
-            return f"{minutes:d}m {seconds:02d}s"
-        return f"{seconds:d}s"
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes:d}m {seconds:02d}s"
+    return f"{seconds:d}s"
 
 
 with wandb.init(
     project="ml-exp",
-    group="mlp-fixed-param-count-sweep",
+    group="mlp-rank-hidden-size-sweep",
+    job_type="train",
+    tags=["mlp-fixed-param-count", "rank-x-hidden"],
     config=hyperparameters,
 ) as run:
     config = run.config
 
-        
     # Create a separate artifact directory for every training run.
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_tag = "mlp_fixed_param_count_sweep"
+    run_tag = "mlp_rank_hidden_size_sweep"
+    # mlp_rank 0 = baseline (full-rank MLP)
+    mlp_rank = config.mlp_rank or None
+    baseline_hidden = config.baseline_hidden
+    rank_label = "baseline" if mlp_rank is None else mlp_rank
     run_directory = (
         Path("./data/training_log")
-        / f"{run_timestamp}_{run.id}_mlp_rank-{config.mlp_rank}_seed-{config.seed}"
+        / f"{run_timestamp}_{run.id}_mlp_rank-{rank_label}_hidden-{baseline_hidden}_seed-{config.seed}"
     )
     run_directory.mkdir(parents=True, exist_ok=False)
 
     
     set_seed(config.seed)
-    print(f"MLP rank {config.mlp_rank} seed {config.seed} on device {device}")
+    print(f"MLP rank {rank_label} baseline_hidden {baseline_hidden} seed {config.seed} on device {device}")
 
     #Model definition
     model = LangModel(
@@ -144,7 +149,8 @@ with wandb.init(
         n_embed=n_embed,
         transformer_blocks=transformer_blocks,
         n_head=n_head,
-        mlp_rank=config.mlp_rank,
+        baseline_hidden=baseline_hidden,
+        mlp_rank=mlp_rank,
         dtype=dtype,
         causal=causal,
         dropout_rate=dropout_rate,
@@ -155,7 +161,7 @@ with wandb.init(
         lr=config.learning_rate
     )
 
-    config["hidden_layer_size"] = hidden_layer = int((2 * n_embed ** 2 + n_embed - 2 * config.mlp_rank * n_embed - 2 * config.mlp_rank) / (2 * config.mlp_rank + 1))
+    config["internal_hidden_layer"] = model.transformer_blocks[0].ffwdn.hidden_layer
     config["optimizer"] = optimizer.__class__.__name__
     config["run_timestamp"] = run_timestamp
     config["parameter_count"] = sum(parameter.numel() for parameter in model.parameters())

@@ -10,7 +10,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, head_size, n_embed, n_head, mlp_rank = 1, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.attention = MultiHeadAttention(head_size, n_embed, n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate)
-        self.ffwdn = MLP_Lowrank(n_embed, mlp_rank, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
+        self.ffwdn = MLP_Full(n_embed, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
         self.layer_norm1 = nn.LayerNorm(n_embed, dtype=dtype)
         self.layer_norm2 = nn.LayerNorm(n_embed, dtype=dtype)
         self.dropout = nn.Dropout(dropout_rate)
@@ -30,10 +30,10 @@ class TransformerBlock(nn.Module):
 # full-rank MLP
 # Dimensions: (B, T, n_embed) in and out, where B = batch size, T = sequence length, n_embed = embedding dimension
 class FixedSizeTransformerBlock(nn.Module):
-    def __init__(self, head_size, n_embed, n_head, mlp_rank, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, head_size, n_embed, n_head, mlp_rank=None, baseline_hidden=None, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.attention = MultiHeadAttention(head_size, n_embed, n_head, dtype=dtype, causal=causal, dropout_rate=dropout_rate)
-        self.ffwdn = MLP_fixed(n_embed, mlp_rank, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU())
+        self.ffwdn = MLP_fixed(n_embed, mlp_rank, dtype=dtype, dropout_rate=dropout_rate, activation=nn.GELU(), baseline_hidden=baseline_hidden)
         self.layer_norm1 = nn.LayerNorm(n_embed, dtype=dtype)
         self.layer_norm2 = nn.LayerNorm(n_embed, dtype=dtype)
         self.dropout = nn.Dropout(dropout_rate)
@@ -79,7 +79,7 @@ class MultiWidthLayerLinearTransformerBlock(nn.Module):
         return x
 
 class LangModel(nn.Module):
-    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, transformer_blocks=1, n_head=4, mlp_rank=32, dtype=torch.float32, causal=True, dropout_rate=0.1):
+    def __init__(self, vocab_size, block_size, head_size=16, n_embed=32, baseline_hidden=None, transformer_blocks=1, n_head=4, mlp_rank=32, dtype=torch.float32, causal=True, dropout_rate=0.1):
         super().__init__()
         self.block_size = block_size
         self.input_n_embed = n_embed
@@ -92,7 +92,7 @@ class LangModel(nn.Module):
         transformer_chain = []
 
         for _ in range(transformer_blocks):
-            transformer_chain.append(FixedSizeTransformerBlock(head_size, self.input_n_embed, n_head=n_head, mlp_rank=mlp_rank, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
+            transformer_chain.append(FixedSizeTransformerBlock(head_size, n_embed, n_head, mlp_rank=mlp_rank, baseline_hidden=baseline_hidden, dtype=dtype, causal=causal, dropout_rate=dropout_rate))
             transformer_chain.append(SineusoidalPositionalEncoding(self.input_n_embed, dtype=dtype, max_len=block_size))
 
         #### Transformer Block

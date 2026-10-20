@@ -8,6 +8,7 @@ import torch
 
 from .data import Dataset
 from .langmodel import LangModel
+from .mlp import MLP_fixed
 
 
 def check(condition, message):
@@ -39,20 +40,21 @@ def main():
     ).to(args.device)
     for block in model.transformer_blocks[::2]:
         check(block.attention.n_head == 4, "Incorrect attention head count")
-        # The bias-inclusive budget gives floor(1816 / 9) = 201 hidden units.
-        linear_shapes = [
-            (layer.in_features, layer.out_features)
-            for layer in block.ffwdn.net
-            if isinstance(layer, torch.nn.Linear)
-        ]
+        # Factorized MLP is sized to match the baseline 2 * (32 * 32 + 32) = 2112 parameters
+        # (up to integer truncation of the internal hidden layer).
+        count = sum(parameter.numel() for parameter in block.ffwdn.parameters())
+        check(abs(count - 2112) <= 2 * 4 + 1, f"MLP_fixed parameter count {count} too far from baseline 2112")
+
+    for baseline_hidden in (32, 64):
+        expected = 2 * 32 * baseline_hidden + baseline_hidden + 32
+        baseline_mlp = MLP_fixed(32, None, baseline_hidden=baseline_hidden)
         check(
-            linear_shapes == [(32, 4), (4, 201), (201, 4), (4, 32)],
-            "Incorrect fixed-budget MLP dimensions",
+            sum(p.numel() for p in baseline_mlp.parameters()) == expected,
+            "Incorrect baseline MLP parameter count",
         )
-        check(
-            sum(parameter.numel() for parameter in block.ffwdn.parameters()) == 2105,
-            "Incorrect MLP parameter count (baseline 2112, rounding gap 7)",
-        )
+        for rank in (4, 8):
+            count = sum(p.numel() for p in MLP_fixed(32, rank, baseline_hidden=baseline_hidden).parameters())
+            check(0 <= expected - count <= 2 * rank, f"MLP_fixed rank {rank} H {baseline_hidden}: {count} vs {expected}")
 
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
