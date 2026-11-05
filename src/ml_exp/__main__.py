@@ -5,13 +5,13 @@ from .data import Dataset
 from .rnn.rnn import RNNLangModel
 
 epoch = 10_000
-lr = 5e-4
-state_size = 512
-vocab_embedding_size = 128
-hidden_size = 256
-chain = 10
-batch_size = 12
-training_leng = 32
+lr = 1e-4
+state_size = 512 + 256
+vocab_embedding_size = 256
+hidden_size = 128
+chain = 12
+batch_size = 16
+training_leng = 48
 numsamples = 1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -68,7 +68,10 @@ for i in range(epoch):
     loss.backward()
     optimizer.step()
     if i % 10 == 0:
-        print(f"{i}th iteration: {loss}")
+        state = model.newstate(batch_size, device=device)
+        x, y = data.get_batch("eval", training_leng, batch_size)
+        logits, state, eloss = model(x, state, y)
+        print(f"{i}th iteration: {loss} and {eloss} eval loss")
 
 model.eval()
 
