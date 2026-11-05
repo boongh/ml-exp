@@ -66,6 +66,7 @@ class RNNLangModel(RNN):
         vocab_size: int,
         /,
         *,
+        dropout: float = 0.4,
         vocab_embedding_size: int = 256,
         hidden_size: int = 384,
         rnnchain_count: int = 20,
@@ -74,6 +75,7 @@ class RNNLangModel(RNN):
         self.vocab_embedding_size = vocab_embedding_size
         self.hidden_size = hidden_size
         self.rnnchain_count = rnnchain_count
+        self.dropout = dropout
 
         self.embedder_lin = torch.nn.Embedding(
             self.vocab_size, self.vocab_embedding_size
@@ -87,8 +89,9 @@ class RNNLangModel(RNN):
                     self.state_size,
                     self.vocab_embedding_size,
                     self.hidden_size,
+                    dropout=self.dropout,
                 )
-                for i in range(rnnchain_count)
+                for _ in range(rnnchain_count)
             ]
         )
 
@@ -246,7 +249,14 @@ class RNNLangModel(RNN):
 
 
 class RNNState(torch.nn.Module):
-    def __init__(self, state_size: int, embedding_size: int, hidden_size: int):
+    def __init__(
+        self,
+        state_size: int,
+        embedding_size: int,
+        hidden_size: int,
+        *,
+        dropout: float = 0.4,
+    ):
         super().__init__()
         self.state_size = state_size
         self.embedding_size = embedding_size
@@ -258,7 +268,7 @@ class RNNState(torch.nn.Module):
         )
         self.extract = torch.nn.Linear(self.state_size, self.embedding_size)
 
-        self.dropout = torch.nn.Dropout(0.2)
+        self.dropout = torch.nn.Dropout(dropout)
 
     def forward(self, embedding, state):
 

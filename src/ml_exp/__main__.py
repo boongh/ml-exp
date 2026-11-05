@@ -6,6 +6,7 @@ from .rnn.rnn import RNNLangModel
 
 epoch = 10_000
 lr = 1e-4
+dropout = 0.4
 state_size = 512 + 256
 vocab_embedding_size = 256
 hidden_size = 128
@@ -24,6 +25,7 @@ model = RNNLangModel(
     vocab_embedding_size=vocab_embedding_size,
     hidden_size=hidden_size,
     rnnchain_count=chain,
+    dropout=dropout,
 ).to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
