@@ -1,9 +1,65 @@
+from abc import ABC, abstractmethod
+
 import torch
 import torch.nn.functional as F
 from torch.multiprocessing.spawn import ProcessExitedException
 
+from ml_exp.data import Dataset
 
-class RNN(torch.nn.Module):
+
+class RNN(torch.nn.Module, ABC):
+    def __init__(self, state_size: int, vocab_size: int):
+        super().__init__()
+        self.state_size = state_size
+        self.vocab_size = vocab_size
+        pass
+
+    def _check_size(self, x, state, targets=None):
+        # x.size() = (B, T)
+        # state (L, B, S)
+        bx, tx = x.size()
+        bs, ls, ss = state.size()
+
+        if bs != bx:
+            raise Exception("Inconsistent batch size between x and state")
+
+        if targets is not None:
+            bt, tt = targets.size()
+            if bt != bx:
+                raise Exception("Inconsistent batch size between x and targets")
+
+            if tx != tt:
+                raise Exception("Inconsistent time size between x and targets")
+
+        # Token can't be over vocab size limit
+        if torch.min(x) < 0 or torch.max(x) >= self.vocab_size:
+            raise Exception("Invalid token vocab range")
+
+        if ss != self.state_size:
+            raise Exception("Invalid state size")
+
+    @abstractmethod
+    def newstate(self, batch: int, device: str) -> torch.Tensor:
+        pass
+
+    def forward(
+        self, x: torch.Tensor, state: torch.Tensor, targets: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        self._check_size(x, state, targets)
+        return self._do_forward(x, state, targets)
+
+    @abstractmethod
+    def _do_forward(
+        self, x: torch.Tensor, state: torch.Tensor, targets: torch.Tensor | None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        pass
+
+    @abstractmethod
+    def _state_catch_up(self, x: torch.Tensor, state: torch.Tensor) -> torch.Tensor:
+        pass
+
+
+class RNNLangModel(RNN):
     def __init__(
         self,
         state_size: int,
@@ -14,9 +70,7 @@ class RNN(torch.nn.Module):
         hidden_size: int = 384,
         rnnchain_count: int = 20,
     ):
-        super().__init__()
-        self.state_size = state_size
-        self.vocab_size = vocab_size
+        super().__init__(state_size, vocab_size)
         self.vocab_embedding_size = vocab_embedding_size
         self.hidden_size = hidden_size
         self.rnnchain_count = rnnchain_count
@@ -42,9 +96,9 @@ class RNN(torch.nn.Module):
     def newstate(self, batch: int, device: str) -> torch.Tensor:
         return torch.zeros((batch, self.rnnchain_count, self.state_size), device=device)
 
-    def forward(
-        self, x: torch.Tensor, state: torch.Tensor, targets: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _do_forward(
+        self, x: torch.Tensor, state: torch.Tensor, targets: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """Calculates the sum of things and other things.
 
         Args:
@@ -59,31 +113,33 @@ class RNN(torch.nn.Module):
             loss:
         """
 
-        # x.size() = (B, T)
-        # state (L, B, S)
-        bx, tx = x.size()
-        state = state.transpose(0, 1)
-        ls, bs, ss = state.size()
+        # bx, tx = x.size()
+        # state = state.transpose(0, 1)
+        # ls, bs, ss = state.size()
 
-        if bs != bx:
-            raise Exception("Inconsistent batch size")
+        # if bs != bx:
+        #     raise Exception("Inconsistent batch size")
 
-        # Token can't be over vocab size limit
-        if torch.min(x) < 0 or torch.max(x) >= self.vocab_size:
-            raise Exception("Invalid token vocab range")
+        # # Token can't be over vocab size limit
+        # if torch.min(x) < 0 or torch.max(x) >= self.vocab_size:
+        #     raise Exception("Invalid token vocab range")
 
-        # State check size.
-        if ls != self.rnnchain_count:
-            raise Exception("Invalid state array size")
+        # # State check size.
+        # if ls != self.rnnchain_count:
+        #     raise Exception("Invalid state array size")
 
-        if ss != self.state_size:
-            raise Exception("Invalid state size")
+        # if ss != self.state_size:
+        #     raise Exception("Invalid state size")
 
         # =====================================================
+        # x.size() = (B, T)
+        # state (L, B, S)
 
         logits = []
         embeddings: torch.Tensor = self.embedder_lin(x)  # (B, T, N)
         embeddings = embeddings.transpose(0, 1)  # Need (T, B, N)
+        state = state.transpose(0, 1)
+        bx, tx = x.size()
         for i in range(tx):
             next_states = []
 
@@ -93,6 +149,13 @@ class RNN(torch.nn.Module):
                 # carry_logits = (B, N)
                 # state = (L, B, S)
                 # state[layeri].size() = (B, S)
+                # print(
+                #     {
+                #         "carry_logits": carry_logits.size(),
+                #         "state": state.size(),
+                #         "embeddings": embeddings.size(),
+                #     }
+                # )
                 logit, next_state = rnnlayer(carry_logits, state[layeri])
                 next_states.append(next_state)
                 carry_logits = carry_logits + logit
@@ -128,6 +191,59 @@ class RNN(torch.nn.Module):
 
         return logitsout, state, loss
 
+    def _state_catch_up(self, x, state) -> torch.Tensor:
+        embeddings: torch.Tensor = self.embedder_lin(x)  # (B, T, N)
+        embeddings = embeddings.transpose(0, 1)  # Need (T, B, N)
+        tx, _, _ = embeddings.size()
+        for i in range(tx):
+            next_states = []
+
+            for layeri, rnnlayer in enumerate(self.rnnchain):
+                # carry_logits = (B, N)
+                # state = (L, B, S)
+                # state[layeri].size() = (B, S)
+                next_state = rnnlayer.evolve_state(embeddings[i], state[layeri])
+                next_states.append(next_state)
+
+            state = torch.stack(next_states)
+
+        return state
+
+    def generate(
+        self,
+        x: torch.Tensor,
+        state: torch.Tensor,
+        max_token: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        super()._check_size(x, state)
+        state = state.transpose(0, 1)
+        state = self._state_catch_up(x[:, :-1], state)
+        carry_logits = self.embedder_lin(x[:, -1])
+        logits = []
+        for _ in range(max_token):
+            next_states = []
+
+            for layeri, rnnlayer in enumerate(self.rnnchain):
+                # carry_logits = (B, N)
+                # state = (L, B, S)
+                # state[layeri].size() = (B, S)
+                # print(
+                #     {
+                #         "carry_logits": carry_logits.size(),
+                #         "state": state.size(),
+                #     }
+                # )
+                logit, next_state = rnnlayer(carry_logits, state[layeri])
+                next_states.append(next_state)
+                carry_logits = carry_logits + logit
+
+            state = torch.stack(next_states)
+            logits.append(carry_logits)
+
+        logits = self.lmhead(torch.stack(logits, dim=0).transpose(0, 1))
+
+        return logits, state
+
 
 class RNNState(torch.nn.Module):
     def __init__(self, state_size: int, embedding_size: int, hidden_size: int):
@@ -146,7 +262,17 @@ class RNNState(torch.nn.Module):
 
     def forward(self, embedding, state):
 
-        # carry_logits = (B, N)
+        # embedding = (B, N)
+        # state = (L, B, S)
+        # state[layeri].size() = (B, S)
+
+        state = self.evolve_state(embedding, state)
+        extract = self.extract(state)
+
+        return self.dropout(extract), self.dropout(state)
+
+    def evolve_state(self, embedding, state):
+        # embedding = (B, N)
         # state = (L, B, S)
         # state[layeri].size() = (B, S)
 
@@ -156,6 +282,5 @@ class RNNState(torch.nn.Module):
         fused_state_token = torch.cat((state, scaled_embedding), dim=-1)
         state = state + self.update(fused_state_token)
         state = torch.tanh(state)
-        extract = self.extract(state)
 
-        return self.dropout(extract), self.dropout(state)
+        return self.dropout(state)
