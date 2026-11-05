@@ -52,8 +52,8 @@ def test_generation():
     print(idx_next.size())
 
     if numsamples == 1:
-        for i in list:
-            print(f"Text {i}: '{data.decode(i)}'")
+        for id, i in enumerate(list):
+            print(f"Text {id}: '{data.decode(i)}'")
 
     model.train()
 
