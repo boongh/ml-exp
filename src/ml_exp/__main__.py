@@ -11,14 +11,14 @@ state_size = 512 + 256
 vocab_embedding_size = 256
 hidden_size = 128
 chain = 12
-batch_size = 16
+batch_size = 12
 training_leng = 48
 numsamples = 1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using {device}")
 
-data = Dataset("./data/labnotebook.md", device=device)
+data = Dataset("./data/data.txt", device=device)
 model = RNNLangModel(
     state_size,
     data.vocab_size,
