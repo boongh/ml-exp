@@ -11,7 +11,7 @@ state_size = 512 + 256
 vocab_embedding_size = 128
 hidden_size = 256
 chain = 12
-batch_size = 48
+batch_size = 128
 training_leng = 48
 numsamples = 1
 
@@ -37,19 +37,10 @@ def test_generation():
     x, _ = data.get_batch("eval", training_leng, batch_size)
 
     state = model.newstate(batch_size, device=device)
-    logits, state = model.generate(x, state, 128)
+    ids, state = model.generate(x, state, 128)
 
-    probs = F.softmax(logits, dim=-1)
-    bprobs, tprobs, nprobs = probs.size()
-    idx_next = (
-        torch.multinomial(probs.view(bprobs * tprobs, nprobs), num_samples=numsamples)
-        .view(bprobs, tprobs, numsamples)
-        .squeeze()
-    )
-
-    list = idx_next.tolist()
-
-    print(idx_next.size())
+    print(ids.size())
+    list = ids.tolist()
 
     if numsamples == 1:
         for id, i in enumerate(list):
@@ -58,7 +49,8 @@ def test_generation():
     model.train()
 
 
-test_generation()
+with torch.no_grad():
+    test_generation()
 
 model.train()
 
@@ -70,11 +62,15 @@ for i in range(epoch):
     loss.backward()
     optimizer.step()
     if i % 10 == 0:
-        state = model.newstate(batch_size, device=device)
-        x, y = data.get_batch("eval", training_leng, batch_size)
-        logits, state, eloss = model(x, state, y)
-        print(f"{i}th iteration: {loss} and {eloss} eval loss")
+        model.eval()
+        with torch.no_grad():
+            state = model.newstate(batch_size, device=device)
+            x, y = data.get_batch("eval", training_leng, batch_size)
+            logits, state, eloss = model(x, state, y)
+            print(f"{i}th iteration: {loss} and {eloss} eval loss")
+        model.train()
 
 model.eval()
 
-test_generation()
+with torch.no_grad():
+    test_generation()

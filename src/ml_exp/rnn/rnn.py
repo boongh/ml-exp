@@ -2,9 +2,6 @@ from abc import ABC, abstractmethod
 
 import torch
 import torch.nn.functional as F
-from torch.multiprocessing.spawn import ProcessExitedException
-
-from ml_exp.data import Dataset
 
 
 class RNN(torch.nn.Module, ABC):
@@ -144,27 +141,25 @@ class RNNLangModel(RNN):
         state = state.transpose(0, 1)
         bx, tx = x.size()
         for i in range(tx):
-            next_states = []
-
             carry_logits = embeddings[i]
 
-            for layeri, rnnlayer in enumerate(self.rnnchain):
-                # carry_logits = (B, N)
-                # state = (L, B, S)
-                # state[layeri].size() = (B, S)
-                # print(
-                #     {
-                #         "carry_logits": carry_logits.size(),
-                #         "state": state.size(),
-                #         "embeddings": embeddings.size(),
-                #     }
-                # )
-                logit, next_state = rnnlayer(carry_logits, state[layeri])
-                next_states.append(next_state)
-                carry_logits = carry_logits + logit
+            carry_logits, state = self._step(carry_logits, state)
+            # for layeri, rnnlayer in enumerate(self.rnnchain):
+            #     # carry_logits = (B, N)
+            #     # state = (L, B, S)
+            #     # state[layeri].size() = (B, S)
+            #     # print(
+            #     #     {
+            #     #         "carry_logits": carry_logits.size(),
+            #     #         "state": state.size(),
+            #     #         "embeddings": embeddings.size(),
+            #     #     }
+            #     # )
+            #     logit, next_state = rnnlayer(carry_logits, state[layeri])
+            #     next_states.append(next_state)
+            #     carry_logits = carry_logits + logit
 
             logits.append(carry_logits)
-            state = torch.stack(next_states)
 
         logitsout = self.lmhead(torch.stack(logits, dim=0).transpose(0, 1))
 
@@ -199,16 +194,7 @@ class RNNLangModel(RNN):
         embeddings = embeddings.transpose(0, 1)  # Need (T, B, N)
         tx, _, _ = embeddings.size()
         for i in range(tx):
-            next_states = []
-
-            for layeri, rnnlayer in enumerate(self.rnnchain):
-                # carry_logits = (B, N)
-                # state = (L, B, S)
-                # state[layeri].size() = (B, S)
-                next_state = rnnlayer.evolve_state(embeddings[i], state[layeri])
-                next_states.append(next_state)
-
-            state = torch.stack(next_states)
+            _, state = self._step(embeddings[i], state)
 
         return state
 
@@ -222,30 +208,40 @@ class RNNLangModel(RNN):
         state = state.transpose(0, 1)
         state = self._state_catch_up(x[:, :-1], state)
         carry_logits = self.embedder_lin(x[:, -1])
-        logits = []
+        ids = []
         for _ in range(max_token):
-            next_states = []
+            carry_logits, state = self._step(carry_logits, state)
+            id_next = torch.multinomial(
+                F.softmax(self.lmhead(carry_logits), dim=-1), num_samples=1
+            ).squeeze(-1)
+            ids.append(id_next)
+            carry_logits = self.embedder_lin(id_next)
 
-            for layeri, rnnlayer in enumerate(self.rnnchain):
-                # carry_logits = (B, N)
-                # state = (L, B, S)
-                # state[layeri].size() = (B, S)
-                # print(
-                #     {
-                #         "carry_logits": carry_logits.size(),
-                #         "state": state.size(),
-                #     }
-                # )
-                logit, next_state = rnnlayer(carry_logits, state[layeri])
-                next_states.append(next_state)
-                carry_logits = carry_logits + logit
+        return torch.stack(ids, dim=-1), state
 
-            state = torch.stack(next_states)
-            logits.append(carry_logits)
+    def _step(
+        self, x: torch.Tensor, state: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        next_states = []
 
-        logits = self.lmhead(torch.stack(logits, dim=0).transpose(0, 1))
+        carry_logits = x
+        for layeri, rnnlayer in enumerate(self.rnnchain):
+            # carry_logits = (B, N)
+            # state = (L, B, S)
+            # state[layeri].size() = (B, S)
+            # print(
+            #     {
+            #         "carry_logits": carry_logits.size(),
+            #         "state": state.size(),
+            #     }
+            # )
+            out, next_state = rnnlayer(carry_logits, state[layeri])
+            next_states.append(next_state)
+            carry_logits = carry_logits + out
 
-        return logits, state
+        state = torch.stack(next_states)
+
+        return carry_logits, state
 
 
 class RNNState(torch.nn.Module):
@@ -279,7 +275,7 @@ class RNNState(torch.nn.Module):
         state = self.evolve_state(embedding, state)
         extract = self.extract(state)
 
-        return self.dropout(extract), self.dropout(state)
+        return extract, state
 
     def evolve_state(self, embedding, state):
         # embedding = (B, N)
