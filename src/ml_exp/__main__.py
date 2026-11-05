@@ -4,14 +4,14 @@ import torch.nn.functional as F
 from .data import Dataset
 from .rnn.rnn import RNNLangModel
 
-epoch = 10_000
+epoch = 2_000
 lr = 1e-4
 dropout = 0.4
 state_size = 512 + 256
-vocab_embedding_size = 256
-hidden_size = 128
+vocab_embedding_size = 128
+hidden_size = 256
 chain = 12
-batch_size = 12
+batch_size = 48
 training_leng = 48
 numsamples = 1
 
