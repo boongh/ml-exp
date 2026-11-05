@@ -53,7 +53,7 @@ def test_generation():
 
     if numsamples == 1:
         for i in list:
-            print(data.decode(i))
+            print(f"Text {i}: '{data.decode(i)}'")
 
     model.train()
 
