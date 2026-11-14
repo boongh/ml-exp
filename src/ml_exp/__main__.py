@@ -34,6 +34,9 @@ DEFAULT_CONFIG = {
     "training_tokens": 10_000 * 16 * 48,
     "eval_every_tokens": 200 * 16 * 48,
     "eval_tokens_per_split": 16 * 16 * 48,
+    # New tokens per validation prompt; excluded from the training-token budget.
+    "pretrain_generation_tokens": 100,
+    "posttrain_generation_tokens": 1000,
     "memory_log_interval": 10,
     "train_fraction": 0.9,
     "data_source": "./data/data.txt",
@@ -148,6 +151,55 @@ def synchronize(device):
         torch.cuda.synchronize(device)
 
 
+def validation_prompts(dataset, block_size):
+    """Three fixed held-out snippets, shared by pre/post and architecture pairs."""
+    # Keep prompts at 48 tokens across the sweep, bounded by the model context.
+    length = min(48, block_size)
+    last_start = len(dataset.val_data) - length
+    return [
+        dataset.val_data[start : start + length].clone()
+        for start in (0, last_start // 2, last_start)
+    ]
+
+
+@torch.no_grad()
+def generate_eval_outputs(model, dataset, prompts, max_new_tokens, seed):
+    """Return continuations only; preserve model mode and training RNG states."""
+    device = next(model.parameters()).device
+    cuda_devices = [device.index] if device.type == "cuda" else []
+    was_training = model.training
+    model.eval()
+    outputs = []
+    try:
+        # Reuse each prompt's seed before/after training and restore the original
+        # CPU/GPU RNG states, so generation cannot perturb training dropout.
+        with torch.random.fork_rng(devices=cuda_devices):
+            for index, prompt in enumerate(prompts):
+                # Prompt seeds do not depend on how many tokens the previous
+                # prompt generated (100 before training versus 1,000 after).
+                torch.random.default_generator.manual_seed(seed + index)
+                if device.type == "cuda":
+                    with torch.cuda.device(device):
+                        torch.cuda.manual_seed(seed + index)
+                idx = prompt.unsqueeze(0).to(device)
+                if isinstance(model, RNNLangModel):
+                    state = model.newstate(1, device=device)
+                    continuation, _ = model.generate(idx, state, max_new_tokens)
+                else:
+                    # Transformer generation includes the prompt in its result;
+                    # RNN generation already returns just the new tokens.
+                    generated = model.generation(idx, max_new_tokens)
+                    continuation = generated[:, idx.size(1) :]
+                outputs.append({
+                    "prompt": dataset.decode(prompt.tolist()),
+                    "generation": dataset.decode(continuation[0].cpu().tolist()),
+                    "new_tokens": continuation.size(1),
+                })
+    finally:
+        model.train(was_training)
+    return outputs
+
+
 @torch.no_grad()
 def estimate_loss(model, dataset, config, device):
     """Fixed token budgets per split; repeat identical evaluation samples."""
@@ -220,7 +272,7 @@ def train(run):
     for key in (
         "n_embed", "n_head", "layer_count", "batch_size", "block_size",
         "training_tokens", "eval_every_tokens", "eval_tokens_per_split",
-        "memory_log_interval",
+        "memory_log_interval", "pretrain_generation_tokens", "posttrain_generation_tokens",
     ):
         if (
             isinstance(config[key], bool)
@@ -243,6 +295,7 @@ def train(run):
     dataset = Dataset(config["data_source"], train=config["train_fraction"], device="cpu")
     if min(len(dataset.train_data), len(dataset.val_data)) <= config["block_size"]:
         raise ValueError("Both dataset splits must contain more than block_size tokens")
+    prompts = validation_prompts(dataset, config["block_size"])
 
     tokens_per_step = config["batch_size"] * config["block_size"]
     # PREDICTED TOKENS = steps * batch_size * block_size.
@@ -260,6 +313,7 @@ def train(run):
         "step_count": step_count,
         "tokens_per_step": tokens_per_step,
         "effective_corpus_epochs": config["training_tokens"] / len(dataset.train_data),
+        "generation_prompts": [dataset.decode(prompt.tolist()) for prompt in prompts],
     })
     run.config.update(metadata)
     summary = dict(metadata)
@@ -323,10 +377,35 @@ def train(run):
                 peaks[f"max_{name}_mib"] = record[key]
         update_summary(peaks)
 
+    def log_generations(stage, max_new_tokens):
+        synchronize(device)
+        start = time.perf_counter()
+        outputs = generate_eval_outputs(
+            model, dataset, prompts, max_new_tokens, seed=config["seed"] + 3
+        )
+        synchronize(device)
+        seconds = time.perf_counter() - start
+        (run_directory / f"{stage}_generations.json").write_text(
+            json.dumps(outputs, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        run.log({
+            "tokens_seen": tokens_seen,
+            f"{stage}_generations": wandb.Table(
+                columns=["prompt", "generation", "new_tokens"],
+                data=[[o["prompt"], o["generation"], o["new_tokens"]] for o in outputs],
+            ),
+        })
+        update_summary({f"{stage}_generation_seconds": seconds})
+        log({"training_step": completed_steps, f"generation/{stage}_seconds": seconds})
+        for output in outputs:
+            print(f"{stage} prompt: {output['prompt']}\nGeneration: {output['generation']}")
+
     log({"training_step": 0})
+    log_generations("pretrain", config["pretrain_generation_tokens"])
     model.train()
     interval_loss_sum = torch.zeros((), device=device)
     interval_steps = interval_tokens = 0
+    training_start = time.perf_counter()
     interval_start = time.perf_counter()
     try:
         for step in range(1, step_count + 1):
@@ -381,7 +460,7 @@ def train(run):
                     next_eval_tokens = (
                         tokens_seen // config["eval_every_tokens"] + 1
                     ) * config["eval_every_tokens"]
-                    elapsed = time.perf_counter() - loop_start
+                    elapsed = time.perf_counter() - training_start
                     eta = elapsed / tokens_seen * (config["training_tokens"] - tokens_seen)
                     metrics["eta_seconds"] = eta
                     print(
@@ -392,13 +471,14 @@ def train(run):
                         f"ETA {format_duration(eta)}"
                     )
                 metrics["wall_tokens_per_second"] = tokens_seen / (
-                    time.perf_counter() - loop_start
+                    time.perf_counter() - training_start
                 )
                 log(metrics)
                 interval_loss_sum.zero_()
                 interval_steps = interval_tokens = 0
                 # Exclude evaluation and log overhead from training throughput.
                 interval_start = time.perf_counter()
+        log_generations("posttrain", config["posttrain_generation_tokens"])
     finally:
         log({"training_step": completed_steps, "training_seconds": training_seconds,
              "evaluation_seconds": evaluation_seconds})
