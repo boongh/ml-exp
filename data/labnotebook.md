@@ -7,6 +7,7 @@
 This project will always use the full complete volumes of "In Search of Lost Time" digital text copy from the Internet Archive. This choice was made due to it being the single longest public domain literature I knew of (7672232 bytes).
 
 ## EXP0. Baseline
+
 ###### Base commit: `3f8b4fd4590c917bc6d6454532a8943a56b564cd`
 
 ###### **Note:** Part of the hyperparameters of this experiment was produced in commit `5b9440d96d9c17b5f2b44b03e514878aa53d03bd` due to a mistake.
@@ -66,8 +67,8 @@ The first experimental run to establish a baseline performance for the model. Th
 | Final measured speed       |          — |               — | 57.45 ms/step              |
 | Training-loop elapsed time |          — |               — | 1,008.54 seconds (16m 49s) |
 
-
 ## EXP1. Exploring the limit of Low-rank MLP
+
 ###### Commit `5b9440d96d9c17b5f2b44b03e514878aa53d03bd`
 
 Our first series of experiments will be one concerning the idea of using 2 linear projection layer of dimension (N, k) and (k, M) to achieve the work of an single linear projection layer of dimension (N, M).
@@ -90,14 +91,14 @@ Experiment for `rank_divisor` 1 to 128 was done in commit `63be74b9624e9c3401743
 
 #### Results
 
-
-![graph of rank divisor against validation loss](./media/wandb_rank_divisor_loss.svg)*[Figure 5]*
+![graph of rank divisor against validation loss](./media/wandb_rank_divisor_loss.svg)_[Figure 5]_
 
 The figure above shows that, as expected increasing the rank divisor substanially degrades the validation loss of the model. Rank divisor of 1, which doubles the parameter count of the `MLP_Lowrank` compares to and `MLP_Full` of the same `n_embed`, does not show any improvement in validation loss compared to the baseline. Rank divisor of 2, which makes the parameter count in the transformer block equal to the baseline, shows slightly higher validation loss compared to the baseline.
 
 Surprisingly, though, increasing the rank divisor from 16 to 32 caused a significantly larger validation loss grap than other increments. Rank divisor 128 and 256 validation loss converges to 1.992.
 
 ###### Figure 6
+
 ![graph of parameter count against final validation loss](./media/wandb_val_loss_vs_param_count_rank_divisor_exp.svg)
 
 There is a visible sudden change in gradient below 400k parameter (rank divisor 16) which is worth investigating into.
@@ -108,20 +109,19 @@ From the preliminary tests, the gap in validation loss at divisor 16 and 32, alo
 
 ### Test 1 - Exploring the Validation Loss Jump
 
-*Relevant commits*
+_Relevant commits_
 
-***[1]*** `72265c15ca1996351e17e39afc4843f643594f3c`
+_**[1]**_ `72265c15ca1996351e17e39afc4843f643594f3c`
 
-***
+---
 
 Further exploration of the validation loss jump was done with W&B sweep in commit **[1]**.
 
 ![Graph of best valudation loss against mlp ranks from 6 to 20](./media/bvl.v.rank_6-20.svg)
 
-Using a sample of 5 different seeds, I tested frequently for best validation loss between mlp rank 6 and 20 (and just to make sure up there is a pattern, to 256) and found that plotting best validation loss against parameter count or mlp_rank does not exhibit any visually distinctive jump up and down in gradient as we might expect to observe from *[Figure 5]*
+Using a sample of 5 different seeds, I tested frequently for best validation loss between mlp rank 6 and 20 (and just to make sure up there is a pattern, to 256) and found that plotting best validation loss against parameter count or mlp_rank does not exhibit any visually distinctive jump up and down in gradient as we might expect to observe from _[Figure 5]_
 
 Another interesting thing however is the plateau in gradient after around 400k to 600k parameters suggesting that something else might be bottlenecking the model.
-
 
 ## EXP2. Exploring the tradeoff between hidden layer width and linear independence
 
@@ -133,7 +133,7 @@ This experiment aims to explore the effect and tradeoff of using a linearly depe
 
 The number of parameter in the baseline MLP layer follows the formula
 
-$P_0 = (n\_embed + 1 )\times n\_embed  + (n\_embed + 1) \times n\_embed = 2 \times ((n\_embed + 1 )\times n\_embed)$
+$P_0 = (n\_embed + 1 )\times n\_embed + (n\_embed + 1) \times n\_embed = 2 \times ((n\_embed + 1 )\times n\_embed)$
 
 The $+mlp\_width$ is because I discovered that linear layer has a bias vector.
 
@@ -145,7 +145,7 @@ $P_1 = (n\_embed + 1) \times rank + (rank + 1) \times hidden\_layer + (hidden\_l
 
 To get scale $hidden\_layer$ to get $P_1 = P_0$ from varying $rank$ the equation becomes
 
-$hidden\_layer = \frac{2  n^2 + n - 2 nr - 2 r}{2 r + 1} \qquad n = n\_embed, r=rank$
+$hidden\_layer = \frac{2 n^2 + n - 2 nr - 2 r}{2 r + 1} \qquad n = n\_embed, r=rank$
 
 ### Result
 

@@ -1,15 +1,23 @@
 from abc import ABC, abstractmethod
+from enum import Enum
+from typing import Self
 
 import torch
 import torch.nn.functional as F
+from torch.nn import Module
+
+from ml_exp.experiments.base_experimental import (
+    BaseExperimentalModel,
+    ParameterBreakdown,
+    VarEnum,
+)
 
 
-class RNN(torch.nn.Module, ABC):
+class RNN(Module, ABC):
     def __init__(self, state_size: int, vocab_size: int):
         super().__init__()
         self.state_size = state_size
         self.vocab_size = vocab_size
-        pass
 
     def _check_size(self, x, state, targets=None):
         # x.size() = (B, T)
@@ -56,7 +64,14 @@ class RNN(torch.nn.Module, ABC):
         pass
 
 
-class RNNLangModel(RNN):
+class RNNLangModelHyperparam(Enum):
+    state_size = "STATE_SIZE"
+    vocab_embedding_size = "VOCAB_EMBEDDING"
+    hidden_size = "HIDDEN_SIZE"
+    rnn_layer_count = "LAYERCOUNT"
+
+
+class RNNLangModel(RNN, BaseExperimentalModel[RNNLangModelHyperparam]):
     def __init__(
         self,
         state_size: int,
@@ -66,19 +81,17 @@ class RNNLangModel(RNN):
         dropout: float = 0.4,
         vocab_embedding_size: int = 256,
         hidden_size: int = 384,
-        rnnchain_count: int = 20,
+        layer_count: int = 20,
     ):
         super().__init__(state_size, vocab_size)
         self.vocab_embedding_size = vocab_embedding_size
         self.hidden_size = hidden_size
-        self.rnnchain_count = rnnchain_count
+        self.rnnchain_count = layer_count
         self.dropout = dropout
 
         self.embedder_lin = torch.nn.Embedding(
             self.vocab_size, self.vocab_embedding_size
         )
-
-        self.lmhead = torch.nn.Linear(self.vocab_embedding_size, self.vocab_size)
 
         self.rnnchain = torch.nn.ModuleList(
             [
@@ -88,9 +101,11 @@ class RNNLangModel(RNN):
                     self.hidden_size,
                     dropout=self.dropout,
                 )
-                for _ in range(rnnchain_count)
+                for _ in range(layer_count)
             ]
         )
+
+        self.lmhead = torch.nn.Linear(self.vocab_embedding_size, self.vocab_size)
 
     # Returns Batch new states
     def newstate(self, batch: int, device: str) -> torch.Tensor:
@@ -242,6 +257,92 @@ class RNNLangModel(RNN):
         state = torch.stack(next_states)
 
         return carry_logits, state
+
+    def copy_scaled_to_fixed_p(self, var: VarEnum, pcount: int) -> Self:
+        """Return a freshly initialized model with only `var` resized.
+
+        Choose the positive integer giving the closest parameter count, choosing
+        the smaller size on ties. Targets below the minimum use size one.
+        Preserve dropout, device, dtype and training mode, but do not copy weights.
+        """
+        from math import isqrt
+
+        if isinstance(pcount, bool) or not isinstance(pcount, int) or pcount <= 0:
+            raise ValueError("pcount must be a positive integer")
+        if not isinstance(var, RNNLangModelHyperparam):
+            raise ValueError(f"Unsupported scaling variable: {var!r}")
+
+        S, E, H, L, V = (
+            self.state_size,
+            self.vocab_embedding_size,
+            self.hidden_size,
+            self.rnnchain_count,
+            self.vocab_size,
+        )
+        if min(S, E, H, L, V) < 1:
+            raise ValueError(
+                "Scaling requires positive model dimensions and layer count"
+            )
+
+        # Embedding + head: 2VE + V (weights are not tied).
+        # Each RNNState, including all biases:
+        # project = EH + H; update = S(S + H) + S; extract = SE + E.
+        # Thus P = 2VE + V + L[S² + S(H + E + 1) + EH + H + E].
+        # Write P(x) = ax² + bx + c for the one variable being changed.
+        a = 0
+        if var is RNNLangModelHyperparam.state_size:
+            # P(S) = LS² + L(H + E + 1)S + c,
+            # c = 2VE + V + L(EH + H + E).
+            # Inverse: S = (-b + sqrt(b² + 4L(pcount - c))) / (2L).
+            a = L
+            b = L * (H + E + 1)
+            c = 2 * V * E + V + L * (E * H + H + E)
+        elif var is RNNLangModelHyperparam.vocab_embedding_size:
+            # P(E) = [2V + L(S + H + 1)]E + V + L(S² + SH + S + H).
+            # Inverse: E = [pcount - V - L(S² + SH + S + H)]
+            #              / [2V + L(S + H + 1)].
+            b = 2 * V + L * (S + H + 1)
+            c = V + L * (S * S + S * H + S + H)
+        elif var is RNNLangModelHyperparam.hidden_size:
+            # P(H) = L(E + S + 1)H + 2VE + V + L(S² + SE + S + E).
+            # Inverse: H = [pcount - 2VE - V - L(S² + SE + S + E)]
+            #              / [L(E + S + 1)].
+            b = L * (E + S + 1)
+            c = 2 * V * E + V + L * (S * S + S * E + S + E)
+        else:  # RNNLangModelHyperparam.rnn_layer_count
+            # P(L) = [S² + S(H + E + 1) + EH + H + E]L + 2VE + V.
+            # Inverse: L = (pcount - 2VE - V)
+            #              / [S² + S(H + E + 1) + EH + H + E].
+            b = S * S + S * (H + E + 1) + E * H + H + E
+            c = 2 * V * E + V
+
+        # Integer arithmetic avoids rounding errors for large budgets. When the
+        # unconstrained inverse is negative, the minimum valid size is optimal.
+        remaining = max(0, pcount - c)
+        lower = max(
+            1,
+            (isqrt(b * b + 4 * a * remaining) - b) // (2 * a) if a else remaining // b,
+        )
+        # P is strictly increasing for positive sizes: only the two integers
+        # surrounding the inverse can minimize |P(x) - pcount|.
+        size = min(
+            (lower, lower + 1),
+            key=lambda x: (abs(a * x * x + b * x + c - pcount), x),
+        )
+        scaled = type(self)(
+            size if var is RNNLangModelHyperparam.state_size else S,
+            V,
+            dropout=self.dropout,
+            vocab_embedding_size=(
+                size if var is RNNLangModelHyperparam.vocab_embedding_size else E
+            ),
+            hidden_size=size if var is RNNLangModelHyperparam.hidden_size else H,
+            layer_count=size if var is RNNLangModelHyperparam.rnn_layer_count else L,
+        )
+        reference = next(self.parameters())
+        scaled.to(device=reference.device, dtype=reference.dtype)
+        scaled.train(self.training)
+        return scaled
 
 
 class RNNState(torch.nn.Module):

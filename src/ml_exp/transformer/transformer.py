@@ -1,7 +1,11 @@
+from enum import Enum
+from typing import Self
+
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from ml_exp.experiments.base_experimental import BaseExperimentalModel
 from ml_exp.transformer.attention import MultiHeadAttention
 from ml_exp.transformer.mlp import MLP_fixed, MLP_Full
 from ml_exp.transformer.pos_embs import SineusoidalPositionalEncoding
@@ -146,7 +150,18 @@ class MultiWidthLayerLinearTransformerBlock(nn.Module):
         return x
 
 
-class LangModel(nn.Module):
+class LangModelHyperparam(Enum):
+    head_size = "HEAD_SIZE"
+    n_embed = "N_EMBED"
+    baseline_hidden = "BASELINE_HIDDEN"
+    transformer_blocks = "TRANSFORMER_BLOCKS"
+    n_head = "N_HEAD"
+    mlp_rank = "MLP_RANK"
+
+
+class LangModel(BaseExperimentalModel[LangModelHyperparam]):
+    variables = LangModelHyperparam
+
     def __init__(
         self,
         vocab_size,
@@ -164,6 +179,20 @@ class LangModel(nn.Module):
         super().__init__()
         self.block_size = block_size
         self.input_n_embed = n_embed
+        # Resolve the default once so varying n_embed holds MLP baseline width
+        # fixed, rather than silently scaling a second experimental variable.
+        self._scaling_config = dict(
+            vocab_size=vocab_size,
+            block_size=block_size,
+            head_size=head_size,
+            n_embed=n_embed,
+            baseline_hidden=n_embed if baseline_hidden is None else baseline_hidden,
+            transformer_blocks=transformer_blocks,
+            n_head=n_head,
+            mlp_rank=mlp_rank,
+            causal=causal,
+            dropout_rate=dropout_rate,
+        )
 
         # Define model layers
         self.token_embedding_table = nn.Embedding(vocab_size, n_embed, dtype=dtype)
@@ -200,6 +229,137 @@ class LangModel(nn.Module):
 
         # Projection layer to vocab size
         self.lm_head = nn.Linear(self.input_n_embed, vocab_size, dtype=dtype)
+
+    def copy_scaled_to_fixed_p(self, var: LangModelHyperparam, pcount: int) -> Self:
+        """Freshly initialize a copy with only the selected dimension changed.
+
+        Minimize absolute parameter-count error; ties use the smaller dimension.
+        As in RNNLangModel, the closest count may exceed the target. Preserve
+        device, dtype and training mode, but not weights. Embedding widths must
+        be even for the existing sinusoidal encoding. Rank scaling retains the
+        low-rank architecture; mlp_rank=None therefore cannot be rank-scaled.
+        """
+        if isinstance(pcount, bool) or not isinstance(pcount, int) or pcount <= 0:
+            raise ValueError("pcount must be a positive integer")
+        if not isinstance(var, LangModelHyperparam):
+            raise ValueError(f"Unsupported scaling variable: {var!r}")
+
+        config = self._scaling_config.copy()
+        V, E, H, L, K, N, R = (
+            config[key] for key in (
+                "vocab_size", "n_embed", "baseline_hidden", "transformer_blocks",
+                "head_size", "n_head", "mlp_rank",
+            )
+        )
+        if min(V, E, H, L, K, N) < 1 or (R is not None and R < 1):
+            raise ValueError("Scaling requires positive dimensions and block count")
+
+        # V=vocabulary, E=embedding, H=baseline hidden, L=blocks,
+        # K=head size, N=head count, R=rank, h=actual low-rank hidden width.
+        # Embedding/head: 2VE+V. Initial positional gamma: E.
+        # Per block: attention 4EKN+E, LayerNorms 4E, positional gamma E,
+        # MLP M=(2E+1)H+E (full) or 2R(E+1)+(2R+1)h+E (low-rank),
+        # h=floor(((2E+1)H-2R(E+1))/(2R+1)). Thus:
+        # P=2VE+V+E+L(4EKN+6E+M). All biases/gammas are included.
+        def parameter_count(size):
+            values = config | {var.name: size}
+            e, h, l, k, n, r = (
+                values[key] for key in (
+                    "n_embed", "baseline_hidden", "transformer_blocks",
+                    "head_size", "n_head", "mlp_rank",
+                )
+            )
+            if r is None:
+                mlp = (2 * e + 1) * h + e
+            else:
+                inner = ((2 * e + 1) * h - 2 * r * (e + 1)) // (2 * r + 1)
+                mlp = 2 * r * (e + 1) + (2 * r + 1) * inner + e
+            return 2 * V * e + V + e + l * (4 * e * k * n + 6 * e + mlp)
+
+        # For the inverses below, C=2VE+V+E+L(4EKN+7E).
+        minimum, step = 1, 1
+        if var is LangModelHyperparam.head_size:
+            # P(K)=4ELNK+c; inverse K=(pcount-c)/(4ELN).
+            # c=2VE+V+E+L(6E+M).
+            pass
+        elif var is LangModelHyperparam.n_head:
+            # P(N)=4ELKN+c; inverse N=(pcount-c)/(4ELK).
+            # c=2VE+V+E+L(6E+M).
+            pass
+        elif var is LangModelHyperparam.transformer_blocks:
+            # P(L)=(4EKN+6E+M)L+2VE+V+E.
+            # Inverse L=(pcount-2VE-V-E)/(4EKN+6E+M).
+            pass
+        elif var is LangModelHyperparam.n_embed:
+            # Full: P(E)=bE+c, b=2V+1+L(4KN+7+2H), c=V+LH.
+            # Inverse E=(pcount-c)/b.
+            # Low-rank, on a fixed-h plateau: b=2V+1+L(4KN+7+2R),
+            # c=V+L(2R+(2R+1)h); inverse E=(pcount-c)/b.
+            # h changes at floor boundaries; search the exact monotone count.
+            minimum, step = 2, 2
+            if R is not None:
+                # Require h>=1: 2E(H-R)>=4R+1-H.
+                if H <= R:
+                    raise ValueError("No valid embedding width at this fixed rank")
+                denominator = 2 * (H - R)
+                minimum = max(2, (4 * R + 1 - H + denominator - 1) // denominator)
+                minimum += minimum % 2
+        elif var is LangModelHyperparam.baseline_hidden:
+            # Full: P(H)=C+L(2E+1)H; inverse H=(pcount-C)/(L(2E+1)).
+            # Low-rank: P(H)=C+L[2R(E+1)+(2R+1)floor(aH-d)],
+            # a=(2E+1)/(2R+1), d=2R(E+1)/(2R+1).
+            # Inverse plateau: h=(pcount-C-2LR(E+1))/(L(2R+1)),
+            # then smallest H=ceil(((2R+1)h+2R(E+1))/(2E+1)).
+            if R is not None:
+                minimum = (2 * R * (E + 1) + 2 * R + 1 + 2 * E) // (2 * E + 1)
+        else:  # LangModelHyperparam.mlp_rank
+            # P(R)=C+L[2R(E+1)+(2R+1)h(R)]. For fixed h:
+            # inverse R=(pcount-C-Lh)/(2L(E+h+1)).
+            # h(R) decreases in steps, making P non-monotone. Check every
+            # valid positive rank; h>=1 gives R<=((2E+1)H-1)/(2E+4).
+            if R is None:
+                raise ValueError("mlp_rank scaling requires a low-rank source model")
+            maximum = ((2 * E + 1) * H - 1) // (2 * E + 4)
+            if maximum < 1:
+                raise ValueError("No valid positive MLP rank")
+            size = min(
+                range(1, maximum + 1),
+                key=lambda x: (abs(parameter_count(x) - pcount), x),
+            )
+
+        if var is not LangModelHyperparam.mlp_rank:
+            # Integer bisection implements the inverses without floating-point
+            # rounding and handles MLP floor boundaries exactly. Find the first
+            # admissible size whose count reaches the target.
+            lo, hi = 0, 1
+            while parameter_count(minimum + hi * step) < pcount:
+                hi *= 2
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if parameter_count(minimum + mid * step) < pcount:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            candidates = (minimum + max(0, lo - 1) * step, minimum + lo * step)
+            size = min(candidates, key=lambda x: (abs(parameter_count(x) - pcount), x))
+            # A low-rank baseline width can have equal-count plateaus. Return
+            # the smallest width on the winning plateau, including below target.
+            target = parameter_count(size)
+            lo, hi = 0, (size - minimum) // step
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if parameter_count(minimum + mid * step) < target:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            size = minimum + lo * step
+
+        config[var.name] = size
+        reference = next(self.parameters())
+        scaled = type(self)(**config, dtype=reference.dtype)
+        scaled.to(device=reference.device, dtype=reference.dtype)
+        scaled.train(self.training)
+        return scaled
 
     def forward(self, idx, targets=None):
 
