@@ -152,31 +152,44 @@ class RNNLangModel(RNN, BaseExperimentalModel[RNNLangModelHyperparam]):
 
         logits = []
         embeddings: torch.Tensor = self.embedder_lin(x)  # (B, T, N)
-        embeddings = embeddings.transpose(0, 1)  # Need (T, B, N)
-        state = state.transpose(0, 1)
+        state = state.transpose(0, 1)  # (L, B, S)
         bx, tx = x.size()
-        for i in range(tx):
-            carry_logits = embeddings[i]
 
-            carry_logits, state = self._step(carry_logits, state)
-            # for layeri, rnnlayer in enumerate(self.rnnchain):
-            #     # carry_logits = (B, N)
-            #     # state = (L, B, S)
-            #     # state[layeri].size() = (B, S)
-            #     # print(
-            #     #     {
-            #     #         "carry_logits": carry_logits.size(),
-            #     #         "state": state.size(),
-            #     #         "embeddings": embeddings.size(),
-            #     #     }
-            #     # )
-            #     logit, next_state = rnnlayer(carry_logits, state[layeri])
-            #     next_states.append(next_state)
-            #     carry_logits = carry_logits + logit
+        # def evolve_state(self, embedding, state):
+        #     # state[layeri].size() = (B, S)
 
-            logits.append(carry_logits)
+        #     scaled_embedding = self.project(embedding)
+        #     # print(f"size of state = {state.size()}")
+        #     # print(f"size of embedding = {scaled_embedding.size()}")
+        #     fused_state_token = torch.cat((state, scaled_embedding), dim=-1)
+        #     state = state + self.update(fused_state_token)
+        #     state = torch.tanh(state)
+        #     extract = self.extract(self.dropout(state))
 
-        logitsout = self.lmhead(torch.stack(logits, dim=0).transpose(0, 1))
+        # embedding = (T, B, N)
+        # state = (L, B, S)
+        #
+
+        next_state = []
+
+        embeddings = embeddings.transpose(0, 1)  # Need (T, B, N)
+        for layeri, layer in enumerate(self.rnnchain):
+            thisstate = state[layeri]  # (B, S) of layer L
+            next_token = []
+            hidden = layer.project(embeddings)  # (T, B, H)
+            for embedding in hidden:  # (B, H)
+                fused_state_token = torch.cat((thisstate, embedding), dim=-1)
+                thisstate = layer.dropout(
+                    torch.tanh(thisstate + layer.update(fused_state_token))
+                )
+                next_token.append(thisstate)
+            state_sequence = torch.stack(next_token, dim=0)
+            embeddings = embeddings + layer.extract(state_sequence)
+            next_state.append(thisstate)
+
+        final_state = torch.stack(next_state, dim=0)
+
+        logitsout = self.lmhead(embeddings.transpose(0, 1))  # (B, T, E)
 
         # print(
         #     {
@@ -196,7 +209,7 @@ class RNNLangModel(RNN, BaseExperimentalModel[RNNLangModelHyperparam]):
         else:
             loss = None
 
-        state = state.transpose(0, 1)
+        state = final_state.transpose(0, 1)
 
         # print(
         #     {"logitsout": logitsout.size(), "state": state.size(), "loss": loss.size()}
@@ -240,6 +253,7 @@ class RNNLangModel(RNN, BaseExperimentalModel[RNNLangModelHyperparam]):
         next_states = []
 
         carry_logits = x
+
         for layeri, rnnlayer in enumerate(self.rnnchain):
             # carry_logits = (B, N)
             # state = (L, B, S)
