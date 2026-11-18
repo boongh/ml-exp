@@ -1,0 +1,42 @@
+# Grid: 2 models x 2^4 model configurations x 4 lengths x 4 seeds = 512 runs.
+# Run one agent at a time per device for meaningful timings.
+program: tests/exec_perf_test.sh
+name: rnn-execution-performance
+method: grid
+command:
+    - ${env}
+    - ${program}
+metric:
+    name: training/seconds_per_token
+    goal: minimize
+parameters:
+    model:
+        values: [rnn, token_major]
+    device:
+        value: auto
+    sequence_length:
+        values: [32, 128, 512, 2056]
+    seed:
+        values: [1337, 1338, 1339]
+    iterations:
+        value: 50
+    warmup:
+        value: 5
+    batch_size:
+        value: 8
+    vocab_size:
+        value: 256
+    state_size:
+        values: [64, 128]
+    vocab_embedding_size:
+        values: [64]
+    hidden_size:
+        values: [64, 128]
+    layer_count:
+        values: [6, 8]
+    dropout:
+        value: 0.0
+    learning_rate:
+        value: 0.0003
+    weight_decay:
+        value: 0.01
